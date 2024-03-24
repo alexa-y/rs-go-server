@@ -8,26 +8,28 @@ func (o OutOfBoundsError) Error() string {
 }
 
 type ByteBuffer struct {
-	buf []byte // internal byte array
+	Buf []byte // internal byte array
 	Position int
+	initialSize int
+	maxWritten int
 }
 
 func NewByteBuffer(size int) *ByteBuffer {
-	return &ByteBuffer{buf: make([]byte, size), Position: 0}
+	return &ByteBuffer{Buf: make([]byte, size), Position: 0, initialSize: size}
 }
 
 func (bb *ByteBuffer) Get(pos int) (byte, error) {
 	if err := bb.checkIndex(pos); err != nil {
 		return 0, err
 	}
-	return bb.buf[pos], nil
+	return bb.Buf[pos], nil
 }
 
 func (bb *ByteBuffer) Put(pos int, val byte) error {
 	if err := bb.checkIndex(pos); err != nil {
 		return err
 	}
-	bb.buf[pos] = val
+	bb.Buf[pos] = val
 	return nil
 }
 
@@ -35,21 +37,31 @@ func (bb *ByteBuffer) Write(val byte) error {
 	if err := bb.checkIndex(bb.Position); err != nil {
 		return err
 	}
-	bb.buf[bb.Position] = val
+	bb.Buf[bb.Position] = val
 	bb.Position++
+	bb.maxWritten++
 	return nil
 }
 
+func (bb *ByteBuffer) Read() (byte, error) {
+	if err := bb.checkIndex(bb.Position); err != nil {
+		return 0, err
+	}
+	val := bb.Buf[bb.Position]
+	bb.Position++
+	return val, nil
+}
+
 func (bb *ByteBuffer) Cap() int {
-	return cap(bb.buf)
+	return cap(bb.Buf)
+}
+
+func (bb *ByteBuffer) Len() int {
+	return len(bb.Buf)
 }
 
 func (bb *ByteBuffer) Remaining() int {
-	return bb.Cap() - bb.Position
-}
-
-func (bb *ByteBuffer) Buffer() []byte {
-	return bb.buf
+	return bb.maxWritten - bb.Position
 }
 
 func (bb *ByteBuffer) Resize(size int) {
@@ -57,12 +69,36 @@ func (bb *ByteBuffer) Resize(size int) {
 		bb.Position = size
 	}
 	tmp := make([]byte, size)
-	copy(tmp, bb.buf)
-	bb.buf = tmp
+	copy(tmp, bb.Buf)
+	bb.Buf = tmp
+}
+
+func (bb *ByteBuffer) Append(newBytes []byte) {
+	//if len(newBytes) > bb.Remaining() {
+	//	bb.Resize(bb.Cap() - bb.Remaining() + len(newBytes))
+	//}
+	for _, b := range newBytes {
+		bb.Write(b)
+	}
+}
+
+func (bb *ByteBuffer) Flip() {
+	bb.Position = 0
+}
+
+func (bb *ByteBuffer) Compact() {
+	bb.Buf = bb.Buf[bb.Position:]
+	bb.maxWritten -= bb.Position
+	bb.Flip()
+	bb.Resize(bb.initialSize)
+}
+
+func (bb *ByteBuffer) Buffer() []byte {
+	return bb.Buf[:bb.maxWritten]
 }
 
 func (bb *ByteBuffer) checkIndex(pos int) error {
-	if pos < 0 || pos >= bb.Cap() {
+	if pos < 0 || pos >= bb.Len() {
 		return OutOfBoundsError{Capacity: bb.Cap(), Index: pos}
 	}
 	return nil

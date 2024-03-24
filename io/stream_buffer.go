@@ -3,6 +3,7 @@ package io
 import (
 	"errors"
 	"rs-go-server/crypto"
+	"strings"
 )
 
 var ErrIllegalAccessType = errors.New("io/stream_buffer: illegal access type")
@@ -37,11 +38,17 @@ type StreamBuffer struct {
 	size int
 	bitPosition int
 	lengthPosition int
+	input bool
 }
 
 func NewOutBuffer(size int) *StreamBuffer {
 	buffer := NewByteBuffer(size)
 	sb := &StreamBuffer{size: size, Buffer: buffer}
+	return sb
+}
+
+func NewInBuffer(buf *ByteBuffer) *StreamBuffer {
+	sb := &StreamBuffer{Buffer: buf, input: true}
 	return sb
 }
 
@@ -70,14 +77,14 @@ func (sb *StreamBuffer) FinishVariableShortPacketHeader() {
 }
 
 func (sb *StreamBuffer) WriteBytes(buf *ByteBuffer) {
-	for _, b := range buf.Buffer() {
+	for _, b := range buf.Buf {
 		sb.WriteByte(int(b), STANDARD)
 	}
 }
 
 func (sb *StreamBuffer) WriteBytesReverse(buf *ByteBuffer) {
 	for i := buf.Cap() - 1; i >= 0; i-- {
-		sb.WriteByte(int(buf.Buffer()[i]), STANDARD)
+		sb.WriteByte(int(buf.Buf[i]), STANDARD)
 	}
 }
 
@@ -213,4 +220,122 @@ func (sb *StreamBuffer) SetAccessType(accessType AccessType) {
 	case BYTE_ACCESS:
 		sb.Buffer.Position = (sb.bitPosition + 7) / 8
 	}
+}
+
+func (sb *StreamBuffer) ReadByte(valueType ValueType) byte {
+	val, _ := sb.Buffer.Read()
+	switch valueType {
+	case A:
+		val = val - 128
+	case C:
+		val = -val
+	case S:
+		val = 128 - val
+	}
+	return val
+}
+
+func (sb *StreamBuffer) ReadShort(valueType ValueType, order ByteOrder) uint16 {
+	var val uint16
+	switch order {
+	case BIG:
+		val |= uint16(sb.ReadByte(STANDARD)) << 8
+		val |= uint16(sb.ReadByte(valueType))
+	case LITTLE:
+		val |= uint16(sb.ReadByte(valueType))
+		val |= uint16(sb.ReadByte(STANDARD)) << 8
+	}
+	return val
+}
+
+func (sb *StreamBuffer) ReadInt(valueType ValueType, order ByteOrder) uint32 {
+	var val uint32
+	switch order {
+	case BIG:
+		val |= uint32(sb.ReadByte(STANDARD)) << 24
+		val |= uint32(sb.ReadByte(STANDARD)) << 16
+		val |= uint32(sb.ReadByte(STANDARD)) << 8
+		val |= uint32(sb.ReadByte(valueType))
+	case MIDDLE:
+		val |= uint32(sb.ReadByte(STANDARD)) << 8
+		val |= uint32(sb.ReadByte(valueType))
+		val |= uint32(sb.ReadByte(STANDARD)) << 24
+		val |= uint32(sb.ReadByte(STANDARD)) << 16
+	case INVERSE_MIDDLE:
+		val |= uint32(sb.ReadByte(STANDARD)) << 16
+		val |= uint32(sb.ReadByte(STANDARD)) << 24
+		val |= uint32(sb.ReadByte(valueType))
+		val |= uint32(sb.ReadByte(STANDARD)) << 8
+	case LITTLE:
+		val |= uint32(sb.ReadByte(valueType))
+		val |= uint32(sb.ReadByte(STANDARD)) << 8
+		val |= uint32(sb.ReadByte(STANDARD)) << 16
+		val |= uint32(sb.ReadByte(STANDARD)) << 24
+	}
+	return val
+}
+
+func (sb *StreamBuffer) ReadLong(valueType ValueType, order ByteOrder) uint64 {
+	var val uint64
+	switch order {
+	case BIG:
+		val |= uint64(sb.ReadByte(STANDARD)) << 56
+		val |= uint64(sb.ReadByte(STANDARD)) << 48
+		val |= uint64(sb.ReadByte(STANDARD)) << 40
+		val |= uint64(sb.ReadByte(STANDARD)) << 32
+		val |= uint64(sb.ReadByte(STANDARD)) << 24
+		val |= uint64(sb.ReadByte(STANDARD)) << 16
+		val |= uint64(sb.ReadByte(STANDARD)) << 8
+		val |= uint64(sb.ReadByte(valueType))
+	case LITTLE:
+		val |= uint64(sb.ReadByte(valueType))
+		val |= uint64(sb.ReadByte(STANDARD)) << 8
+		val |= uint64(sb.ReadByte(STANDARD)) << 16
+		val |= uint64(sb.ReadByte(STANDARD)) << 24
+		val |= uint64(sb.ReadByte(STANDARD)) << 32
+		val |= uint64(sb.ReadByte(STANDARD)) << 40
+		val |= uint64(sb.ReadByte(STANDARD)) << 48
+		val |= uint64(sb.ReadByte(STANDARD)) << 56
+	}
+	return val
+}
+
+func (sb *StreamBuffer) ReadString() string {
+	builder := strings.Builder{}
+	for {
+		tmp := sb.ReadByte(STANDARD)
+		if tmp == 10 {
+			break
+		} else {
+			builder.WriteByte(tmp)
+		}
+	}
+	return builder.String()
+}
+
+func (sb *StreamBuffer) ReadBytes(amount int, valueType ValueType) []byte {
+	data := make([]byte, amount)
+	for i := 0; i < amount; i++ {
+		data[i] = sb.ReadByte(valueType)
+	}
+	return data
+}
+
+func (sb *StreamBuffer) ReadBytesReverse(amount int, valueType ValueType) []byte {
+	data := make([]byte, amount)
+	dataPosition := 0
+	for i := sb.Buffer.Position + amount - 1; i >= sb.Buffer.Position; i-- {
+		val, _ := sb.Buffer.Get(i)
+		switch valueType {
+		case A:
+			val -= 128
+		case C:
+			val = -val
+		case S:
+			val = 128 - val
+		}
+		data[dataPosition] = val
+		dataPosition++
+	}
+	return data
 }

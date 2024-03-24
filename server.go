@@ -2,25 +2,69 @@ package main
 
 import (
 	"fmt"
-	"rs-go-server/io"
+	"net"
+	"rs-go-server/app"
+	"time"
+)
+
+const (
+	Port int = 43594
+	MaxPlayers = 2000
+	CycleMillis = 600
 )
 
 var (
-	Port int
+	Players = make([]*app.Player, MaxPlayers)
 )
 
 func main() {
-	//cipher := crypto.NewISAACCipher([]uint32{1, 2, 3 })
-
-	bb := io.NewByteBuffer(10)
-	for i := 0; i < 15; i++ {
-		err := bb.Write(byte(i))
+	listener, err := net.ListenTCP("tcp", &net.TCPAddr{ IP: net.ParseIP("0.0.0.0"), Port: Port })
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Listening on %v\n", listener.Addr())
+	go UpdatePlayers()
+	for {
+		connection, err := listener.AcceptTCP()
 		if err != nil {
-			fmt.Println(err.Error())
-			bb.Resize(bb.Cap() + 1)
-			bb.Write(byte(i))
+			fmt.Println(err)
+			continue
+		}
+		fmt.Println(connection.RemoteAddr())
+		if slot := NextPlayerSlot(); slot >= 0 {
+			Players[NextPlayerSlot()] = app.NewPlayer(connection)
 		}
 	}
-	fmt.Println(bb.Remaining())
-	fmt.Println(bb)
+}
+
+func UpdatePlayers() {
+	for {
+		cycleStart := time.Now()
+		for _, p := range Players {
+			if p == nil {
+				continue
+			}
+			if p.Connected {
+				p.Process()
+			}
+		}
+		for _, p := range Players {
+			if p == nil {
+				continue
+			}
+			if p.Connected {
+				p.Update()
+			}
+		}
+		time.Sleep(time.Now().Sub(cycleStart) + CycleMillis * time.Millisecond)
+	}
+}
+
+func NextPlayerSlot() int {
+	for i, p := range Players {
+		if p == nil || !p.Connected {
+			return i
+		}
+	}
+	return -1
 }
