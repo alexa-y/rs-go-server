@@ -27,8 +27,8 @@ type Player struct {
 }
 
 func NewPlayer(socket *net.TCPConn) *Player {
-	player := &Player{ Socket: socket, Connected: true, inBuffer: io.NewByteBuffer(512) }
-	player.Position = &Position{X: 3222, Y: 3222}
+	player := &Player{ Socket: socket, Connected: true, inBuffer: io.NewByteBuffer(512), UpdateRequired: true }
+	player.Position = &Position{X: 3222, Y: 3218}
 	return player
 }
 
@@ -43,7 +43,8 @@ func (p *Player) Process() {
 }
 
 func (p *Player) Update() {
-
+	p.sendUpdate()
+	p.UpdateRequired = false
 }
 
 func (p *Player) Login() error {

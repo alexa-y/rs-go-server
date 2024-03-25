@@ -52,7 +52,7 @@ func UpdatePlayers() {
 			if p == nil {
 				continue
 			}
-			if p.Connected {
+			if p.Connected && p.LoginStage == app.LOGGED_IN {
 				p.Update()
 			}
 		}

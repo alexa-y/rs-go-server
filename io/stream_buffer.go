@@ -73,11 +73,13 @@ func (sb *StreamBuffer) FinishVariablePacketHeader() {
 }
 
 func (sb *StreamBuffer) FinishVariableShortPacketHeader() {
-	sb.Buffer.Put(sb.lengthPosition, byte(sb.Buffer.Position - sb.lengthPosition -2 ))
+	val := sb.Buffer.Position - sb.lengthPosition - 2
+	sb.Buffer.Put(sb.lengthPosition, byte(val >> 8))
+	sb.Buffer.Put(sb.lengthPosition + 1, byte(val))
 }
 
 func (sb *StreamBuffer) WriteBytes(buf *ByteBuffer) {
-	for _, b := range buf.Buf {
+	for _, b := range buf.Buffer() {
 		sb.WriteByte(int(b), STANDARD)
 	}
 }
@@ -219,6 +221,7 @@ func (sb *StreamBuffer) SetAccessType(accessType AccessType) {
 		sb.bitPosition = sb.Buffer.Position * 8
 	case BYTE_ACCESS:
 		sb.Buffer.Position = (sb.bitPosition + 7) / 8
+		sb.Buffer.maxWritten = sb.Buffer.Position
 	}
 }
 

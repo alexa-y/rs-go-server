@@ -18,6 +18,11 @@ func NewByteBuffer(size int) *ByteBuffer {
 	return &ByteBuffer{Buf: make([]byte, size), Position: 0, initialSize: size}
 }
 
+func NewByteBufferWithBytes(b []byte) *ByteBuffer {
+	l := len(b)
+	return &ByteBuffer{Buf: b, maxWritten: l, Position: l, initialSize: l}
+}
+
 func (bb *ByteBuffer) Get(pos int) (byte, error) {
 	if err := bb.checkIndex(pos); err != nil {
 		return 0, err
