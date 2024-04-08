@@ -2,6 +2,7 @@ package io
 
 import (
 	"errors"
+	"io"
 	"rs-go-server/crypto"
 	"strings"
 )
@@ -9,12 +10,14 @@ import (
 var ErrIllegalAccessType = errors.New("io/stream_buffer: illegal access type")
 
 type AccessType int
+
 const (
 	BYTE_ACCESS AccessType = iota
 	BIT_ACCESS
 )
 
 type ValueType int
+
 const (
 	STANDARD ValueType = iota
 	A
@@ -23,6 +26,7 @@ const (
 )
 
 type ByteOrder int
+
 const (
 	LITTLE ByteOrder = iota
 	BIG
@@ -30,15 +34,15 @@ const (
 	INVERSE_MIDDLE
 )
 
-var bitmask = [...]int {0, 0x1, 0x3, 0x7, 0xf, 0x1f, 0x3f, 0x7f, 0xff, 0x1ff, 0x3ff, 0x7ff, 0xfff, 0x1fff, 0x3fff, 0x7fff, 0xffff, 0x1ffff, 0x3ffff, 0x7ffff, 0xfffff, 0x1fffff, 0x3fffff, 0x7fffff, 0xffffff, 0x1ffffff, 0x3ffffff, 0x7ffffff, 0xfffffff, 0x1fffffff, 0x3fffffff, 0x7fffffff, -1}
+var bitmask = [...]int{0, 0x1, 0x3, 0x7, 0xf, 0x1f, 0x3f, 0x7f, 0xff, 0x1ff, 0x3ff, 0x7ff, 0xfff, 0x1fff, 0x3fff, 0x7fff, 0xffff, 0x1ffff, 0x3ffff, 0x7ffff, 0xfffff, 0x1fffff, 0x3fffff, 0x7fffff, 0xffffff, 0x1ffffff, 0x3ffffff, 0x7ffffff, 0xfffffff, 0x1fffffff, 0x3fffffff, 0x7fffffff, -1}
 
 type StreamBuffer struct {
-	accessType AccessType
-	Buffer *ByteBuffer
-	size int
-	bitPosition int
+	accessType     AccessType
+	Buffer         *ByteBuffer
+	size           int
+	bitPosition    int
 	lengthPosition int
-	input bool
+	input          bool
 }
 
 func NewOutBuffer(size int) *StreamBuffer {
@@ -52,30 +56,42 @@ func NewInBuffer(buf *ByteBuffer) *StreamBuffer {
 	return sb
 }
 
-func (sb *StreamBuffer) WriteHeader(cipher *crypto.ISAACCipher, value int) {
-	sb.WriteByte(value + int(cipher.Next()), STANDARD)
+func (sb *StreamBuffer) WriteTo(w io.Writer) (int, error) {
+	return w.Write(sb.Buffer.Buffer())
 }
 
-func (sb *StreamBuffer) WriteVariablePacketHeader(cipher *crypto.ISAACCipher, value int) {
+func (sb *StreamBuffer) Remaining() int {
+	return sb.Buffer.Remaining()
+}
+
+func (sb *StreamBuffer) Read() byte {
+	return sb.ReadByte(STANDARD)
+}
+
+func (sb *StreamBuffer) WriteHeader(cipher crypto.Cipher, value int) {
+	sb.WriteByte(value+int(cipher.Next()), STANDARD)
+}
+
+func (sb *StreamBuffer) WriteVariablePacketHeader(cipher crypto.Cipher, value int) {
 	sb.WriteHeader(cipher, value)
 	sb.lengthPosition = sb.Buffer.Position
 	sb.WriteByte(0, STANDARD)
 }
 
-func (sb *StreamBuffer) WriteVariableShortPacketHeader(cipher *crypto.ISAACCipher, value int) {
+func (sb *StreamBuffer) WriteVariableShortPacketHeader(cipher crypto.Cipher, value int) {
 	sb.WriteHeader(cipher, value)
 	sb.lengthPosition = sb.Buffer.Position
 	sb.WriteShort(0, STANDARD, BIG)
 }
 
 func (sb *StreamBuffer) FinishVariablePacketHeader() {
-	sb.Buffer.Put(sb.lengthPosition, byte(sb.Buffer.Position - sb.lengthPosition - 1))
+	sb.Buffer.Put(sb.lengthPosition, byte(sb.Buffer.Position-sb.lengthPosition-1))
 }
 
 func (sb *StreamBuffer) FinishVariableShortPacketHeader() {
 	val := sb.Buffer.Position - sb.lengthPosition - 2
-	sb.Buffer.Put(sb.lengthPosition, byte(val >> 8))
-	sb.Buffer.Put(sb.lengthPosition + 1, byte(val))
+	sb.Buffer.Put(sb.lengthPosition, byte(val>>8))
+	sb.Buffer.Put(sb.lengthPosition+1, byte(val))
 }
 
 func (sb *StreamBuffer) WriteBytes(buf *ByteBuffer) {
@@ -108,7 +124,7 @@ func (sb *StreamBuffer) WriteBits(amount, value int) error {
 	for ; amount > bitOffset; bitOffset = 8 {
 		tmp, _ := sb.Buffer.Get(bytePos)
 		tmp &= byte(^bitmask[bitOffset])
-		tmp |= byte((value >> uint(amount - bitOffset)) & bitmask[bitOffset])
+		tmp |= byte((value >> uint(amount-bitOffset)) & bitmask[bitOffset])
 		sb.Buffer.Put(bytePos, tmp)
 		bytePos++
 		amount -= bitOffset
@@ -120,8 +136,8 @@ func (sb *StreamBuffer) WriteBits(amount, value int) error {
 		sb.Buffer.Put(bytePos, tmp)
 	} else {
 		tmp, _ := sb.Buffer.Get(bytePos)
-		tmp &= ^byte(bitmask[amount] << uint(bitOffset - amount))
-		tmp |= byte((value & bitmask[amount]) << uint(bitOffset - amount))
+		tmp &= ^byte(bitmask[amount] << uint(bitOffset-amount))
+		tmp |= byte((value & bitmask[amount]) << uint(bitOffset-amount))
 		sb.Buffer.Put(bytePos, tmp)
 	}
 
@@ -151,59 +167,59 @@ func (sb *StreamBuffer) WriteByte(value int, valueType ValueType) {
 func (sb *StreamBuffer) WriteShort(value int, valueType ValueType, order ByteOrder) {
 	switch order {
 	case BIG:
-		sb.WriteByte(value >> 8, STANDARD)
+		sb.WriteByte(value>>8, STANDARD)
 		sb.WriteByte(value, valueType)
 	case LITTLE:
 		sb.WriteByte(value, valueType)
-		sb.WriteByte(value >> 8, STANDARD)
+		sb.WriteByte(value>>8, STANDARD)
 	}
 }
 
 func (sb *StreamBuffer) WriteInt(value int, valueType ValueType, order ByteOrder) {
 	switch order {
 	case BIG:
-		sb.WriteByte(value >> 24, STANDARD)
-		sb.WriteByte(value >> 16, STANDARD)
-		sb.WriteByte(value >> 8, STANDARD)
+		sb.WriteByte(value>>24, STANDARD)
+		sb.WriteByte(value>>16, STANDARD)
+		sb.WriteByte(value>>8, STANDARD)
 		sb.WriteByte(value, valueType)
 	case MIDDLE:
-		sb.WriteByte(value >> 8, STANDARD)
+		sb.WriteByte(value>>8, STANDARD)
 		sb.WriteByte(value, valueType)
-		sb.WriteByte(value >> 24, STANDARD)
-		sb.WriteByte(value >> 16, STANDARD)
+		sb.WriteByte(value>>24, STANDARD)
+		sb.WriteByte(value>>16, STANDARD)
 	case INVERSE_MIDDLE:
-		sb.WriteByte(value >> 16, STANDARD)
-		sb.WriteByte(value >> 24, STANDARD)
+		sb.WriteByte(value>>16, STANDARD)
+		sb.WriteByte(value>>24, STANDARD)
 		sb.WriteByte(value, valueType)
-		sb.WriteByte(value >> 8, STANDARD)
+		sb.WriteByte(value>>8, STANDARD)
 	case LITTLE:
 		sb.WriteByte(value, valueType)
-		sb.WriteByte(value >> 8, STANDARD)
-		sb.WriteByte(value >> 16, STANDARD)
-		sb.WriteByte(value >> 24, STANDARD)
+		sb.WriteByte(value>>8, STANDARD)
+		sb.WriteByte(value>>16, STANDARD)
+		sb.WriteByte(value>>24, STANDARD)
 	}
 }
 
 func (sb *StreamBuffer) WriteLong(value int64, valueType ValueType, order ByteOrder) {
 	switch order {
 	case BIG:
-		sb.WriteByte(int(value >> 56), STANDARD)
-		sb.WriteByte(int(value >> 48), STANDARD)
-		sb.WriteByte(int(value >> 40), STANDARD)
-		sb.WriteByte(int(value >> 32), STANDARD)
-		sb.WriteByte(int(value >> 24), STANDARD)
-		sb.WriteByte(int(value >> 16), STANDARD)
-		sb.WriteByte(int(value >> 8), STANDARD)
+		sb.WriteByte(int(value>>56), STANDARD)
+		sb.WriteByte(int(value>>48), STANDARD)
+		sb.WriteByte(int(value>>40), STANDARD)
+		sb.WriteByte(int(value>>32), STANDARD)
+		sb.WriteByte(int(value>>24), STANDARD)
+		sb.WriteByte(int(value>>16), STANDARD)
+		sb.WriteByte(int(value>>8), STANDARD)
 		sb.WriteByte(int(value), STANDARD)
 	case LITTLE:
 		sb.WriteByte(int(value), STANDARD)
-		sb.WriteByte(int(value >> 8), STANDARD)
-		sb.WriteByte(int(value >> 16), STANDARD)
-		sb.WriteByte(int(value >> 24), STANDARD)
-		sb.WriteByte(int(value >> 32), STANDARD)
-		sb.WriteByte(int(value >> 40), STANDARD)
-		sb.WriteByte(int(value >> 48), STANDARD)
-		sb.WriteByte(int(value >> 56), STANDARD)
+		sb.WriteByte(int(value>>8), STANDARD)
+		sb.WriteByte(int(value>>16), STANDARD)
+		sb.WriteByte(int(value>>24), STANDARD)
+		sb.WriteByte(int(value>>32), STANDARD)
+		sb.WriteByte(int(value>>40), STANDARD)
+		sb.WriteByte(int(value>>48), STANDARD)
+		sb.WriteByte(int(value>>56), STANDARD)
 	}
 }
 

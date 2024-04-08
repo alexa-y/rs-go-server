@@ -3,6 +3,7 @@ package app
 import (
 	"crypto/rand"
 	"fmt"
+	gio "io"
 	"rs-go-server/crypto"
 	"rs-go-server/io"
 	"strings"
@@ -10,30 +11,34 @@ import (
 
 // responsible for I/O for player
 
-type UnexpectedPacketSizeError struct { Received, Expected int }
+type UnexpectedPacketSizeError struct{ Received, Expected int }
+
 func (e UnexpectedPacketSizeError) Error() string {
 	return fmt.Sprintf("client: Unexpected Packet Size Error.  Received: %d, Expected: %d", e.Received, e.Expected)
 }
 
-type InvalidLoginRequestError struct { Request byte }
+type InvalidLoginRequestError struct{ Request byte }
+
 func (e InvalidLoginRequestError) Error() string {
 	return fmt.Sprintf("client: Invalid login request.  Request: %d", e.Request)
 }
 
-type InvalidClientVersionError struct { Version uint16 }
+type InvalidClientVersionError struct{ Version uint16 }
+
 func (e InvalidClientVersionError) Error() string {
 	return fmt.Sprintf("client: Invalid client version.  Version: %d", e.Version)
 }
 
 func (p *Player) HandleIncomingData() error {
 	incomingData := make([]byte, 2048)
-	size, err := p.Socket.Read(incomingData)
+	size, err := gio.ReadAtLeast(p.Socket, incomingData, 1)
+	//size, err := p.Socket.ReadAt(incomingData)
 	p.inBuffer.Compact()
 	p.inBuffer.Append(incomingData[:size])
 	p.inBuffer.Flip()
 
 	if err != nil {
-		fmt.Println("Player incoming data error")
+		fmt.Printf("Player incoming data error: %v", err)
 		return err
 	}
 	buffer := io.NewInBuffer(p.inBuffer)
@@ -41,35 +46,66 @@ func (p *Player) HandleIncomingData() error {
 	if p.LoginStage != LOGGED_IN {
 		return p.handleLogin(buffer)
 	}
+
+	if p.PacketID == 0xFF {
+		packetId, _ := p.inBuffer.Read()
+		p.PacketID = packetId
+		p.PacketID -= byte(p.Decryptor.Next())
+		fmt.Printf("Packet ID: %d\n", p.PacketID)
+	}
+
+	if p.PacketLength == 0xFF {
+		p.PacketLength = PACKET_SIZES[p.PacketID]
+		if p.PacketLength == 0xFF {
+			if p.inBuffer.Remaining() > 0 {
+				packetLength, _ := p.inBuffer.Read()
+				p.PacketLength = packetLength
+			} else {
+				return nil
+			}
+		}
+	}
+
+	if p.inBuffer.Remaining() >= int(p.PacketLength) {
+		data := make([]byte, p.PacketLength)
+		for i := range data {
+			data[i], _ = p.inBuffer.Read()
+		}
+		packet := &Packet{p.PacketID, p.PacketLength, io.NewByteBufferWithBytes(data)}
+		p.handlePacket(packet)
+
+		p.PacketID = 0xFF
+		p.PacketLength = 0xFF
+	}
 	return nil
 }
 
 func (p *Player) handleLogin(buffer *io.StreamBuffer) error {
 	switch p.LoginStage {
 	case CONNECTED:
-		if l := buffer.Buffer.Remaining(); l < 2 {
-			return UnexpectedPacketSizeError{ Expected: 2, Received: l }
+		if l := buffer.Remaining(); l < 2 {
+			return UnexpectedPacketSizeError{Expected: 2, Received: l}
 		}
 
-		request, _ := buffer.Buffer.Read()
-		buffer.Buffer.Read() // name hash
+		request := buffer.Read()
+		buffer.Read() // name hash
 		if request != 14 {
 			return InvalidLoginRequestError{Request: request}
 		}
 
 		out := io.NewOutBuffer(17)
 		out.WriteLong(0, io.STANDARD, io.BIG) // ignored by client
-		out.WriteByte(0, io.STANDARD) // response opcode, 0 for logging in
+		out.WriteByte(0, io.STANDARD)         // response opcode, 0 for logging in
 		randBytes := make([]byte, 8)
 		rand.Read(randBytes)
 		out.WriteBytes(io.NewByteBufferWithBytes(randBytes))
-		err := p.Send(out.Buffer)
+		err := p.Send(out)
 
 		p.LoginStage = LOGGING_IN
 		return err
 	case LOGGING_IN:
 		if l := buffer.Buffer.Remaining(); l < 2 {
-			return UnexpectedPacketSizeError{ Expected: 2, Received: l }
+			return UnexpectedPacketSizeError{Expected: 2, Received: l}
 		}
 
 		request, _ := buffer.Buffer.Read()
@@ -91,21 +127,23 @@ func (p *Player) handleLogin(buffer *io.StreamBuffer) error {
 		}
 
 		buffer.ReadByte(io.STANDARD) // high/low memory
-		for i := 0; i < 9; i++ { // CRC Keys
+		for i := 0; i < 9; i++ {     // CRC Keys
 			buffer.ReadInt(io.STANDARD, io.BIG)
 		}
 		buffer.ReadByte(io.STANDARD) // RSA block length
 		buffer.ReadByte(io.STANDARD) // RSA opcode
-		buffer.ReadString() // codebase
+		buffer.ReadString()          // codebase
 
 		clientHalf := buffer.ReadLong(io.STANDARD, io.BIG)
 		serverHalf := buffer.ReadLong(io.STANDARD, io.BIG)
-		isaacSeed := [...]uint32{ uint32(clientHalf >> 32), uint32(clientHalf), uint32(serverHalf >> 32), uint32(serverHalf) }
-		p.Decryptor = crypto.NewISAACCipher(isaacSeed[:])
-		for i, _ := range isaacSeed {
+		isaacSeed := [...]uint32{uint32(clientHalf >> 32), uint32(clientHalf), uint32(serverHalf >> 32), uint32(serverHalf)}
+		//p.Decryptor = crypto.NewISAACCipher(isaacSeed[:])
+		p.Decryptor = crypto.NewMockISAACCipher(isaacSeed[:])
+		for i := range isaacSeed {
 			isaacSeed[i] += 50
 		}
-		p.Encryptor = crypto.NewISAACCipher(isaacSeed[:])
+		//p.Encryptor = crypto.NewISAACCipher(isaacSeed[:])
+		p.Encryptor = crypto.NewMockISAACCipher(isaacSeed[:])
 
 		buffer.ReadInt(io.STANDARD, io.BIG) // user ID
 		p.Username = strings.TrimSpace(buffer.ReadString())
@@ -120,20 +158,27 @@ func (p *Player) handleLogin(buffer *io.StreamBuffer) error {
 	return nil
 }
 
+func (p *Player) handlePacket(packet *Packet) {
+	switch packet.ID {
+	case 185: //button clicking
+		HandleButtonPacket(p, packet)
+	}
+}
+
 func (p *Player) SendLoginFrame() error {
 	buffer := io.NewOutBuffer(3)
 	buffer.WriteByte(2, io.STANDARD)
 	buffer.WriteByte(0, io.STANDARD)
 	buffer.WriteByte(0, io.STANDARD)
-	return p.Send(buffer.Buffer)
+	return p.Send(buffer)
 }
 
 func (p *Player) SendMapRegion() error {
 	buffer := io.NewOutBuffer(5)
 	buffer.WriteHeader(p.Encryptor, 69)
-	buffer.WriteShort(p.Position.RegionX() + 6, io.A, io.BIG)
-	buffer.WriteShort(p.Position.RegionY() + 6, io.STANDARD, io.BIG)
-	return p.Send(buffer.Buffer)
+	buffer.WriteShort(p.Position.RegionX()+6, io.A, io.BIG)
+	buffer.WriteShort(p.Position.RegionY()+6, io.STANDARD, io.BIG)
+	return p.Send(buffer)
 }
 
 func (p *Player) sendUpdate() error {
@@ -159,7 +204,7 @@ func (p *Player) sendUpdate() error {
 	}
 
 	out.FinishVariableShortPacketHeader()
-	return p.Send(out.Buffer)
+	return p.Send(out)
 }
 
 func (p *Player) updateLocalPlayerMovement(buf *io.StreamBuffer) {
@@ -192,14 +237,14 @@ func (p *Player) appendAppearance(buf *io.StreamBuffer) {
 	block.WriteByte(0, io.STANDARD)
 	block.WriteByte(0, io.STANDARD)
 	block.WriteByte(0, io.STANDARD)
-	block.WriteShort(0x100 + 18, io.STANDARD, io.BIG)
+	block.WriteShort(0x100+18, io.STANDARD, io.BIG)
 	block.WriteByte(0, io.STANDARD)
-	block.WriteShort(0x100 + 26, io.STANDARD, io.BIG)
-	block.WriteShort(0x100 + 36, io.STANDARD, io.BIG)
+	block.WriteShort(0x100+26, io.STANDARD, io.BIG)
+	block.WriteShort(0x100+36, io.STANDARD, io.BIG)
 	block.WriteShort(0x100, io.STANDARD, io.BIG)
-	block.WriteShort(0x100 + 33, io.STANDARD, io.BIG)
-	block.WriteShort(0x100 + 42, io.STANDARD, io.BIG)
-	block.WriteShort(0x100 + 10, io.STANDARD, io.BIG)
+	block.WriteShort(0x100+33, io.STANDARD, io.BIG)
+	block.WriteShort(0x100+42, io.STANDARD, io.BIG)
+	block.WriteShort(0x100+10, io.STANDARD, io.BIG)
 
 	// colors
 	block.WriteByte(7, io.STANDARD)
@@ -225,7 +270,44 @@ func (p *Player) appendAppearance(buf *io.StreamBuffer) {
 	buf.WriteBytes(block.Buffer)
 }
 
-func (p *Player) Send(buffer *io.ByteBuffer) error {
-	_, err := p.Socket.Write(buffer.Buffer())
+func (p *Player) SendSidebarInterface(idx, val int) {
+	buf := io.NewOutBuffer(4)
+	buf.WriteHeader(p.Encryptor, 71)
+	buf.WriteShort(val, io.STANDARD, io.BIG)
+	buf.WriteByte(idx, io.A)
+	p.Send(buf)
+}
+
+func (p *Player) SendInventory() {
+	buf := io.NewOutBuffer(256)
+	buf.WriteVariableShortPacketHeader(p.Encryptor, 53)
+	buf.WriteShort(3214, io.STANDARD, io.BIG)
+	buf.WriteShort(len(p.Inventory), io.STANDARD, io.BIG)
+	for _, item := range p.Inventory {
+		if item.Amount > 254 {
+			buf.WriteByte(255, io.STANDARD)
+			buf.WriteInt(item.Amount, io.STANDARD, io.INVERSE_MIDDLE)
+		} else {
+			buf.WriteByte(item.Amount, io.STANDARD)
+		}
+		buf.WriteShort(item.ID+1, io.A, io.LITTLE)
+	}
+	buf.FinishVariableShortPacketHeader()
+	p.Send(buf)
+}
+
+func (p *Player) SendLogout() {
+	buf := io.NewOutBuffer(1)
+	buf.WriteHeader(p.Encryptor, 109)
+	p.Send(buf)
+}
+
+// func (p *Player) Send(buffer *io.ByteBuffer) error {
+// 	_, err := p.Socket.Write(buffer.Buffer())
+// 	return err
+// }
+
+func (p *Player) Send(buffer *io.StreamBuffer) error {
+	_, err := buffer.WriteTo(p.Socket)
 	return err
 }

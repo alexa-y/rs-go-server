@@ -8,9 +8,9 @@ import (
 )
 
 const (
-	Port int = 43594
-	MaxPlayers = 2000
-	CycleMillis = 600
+	Port        int = 43594
+	MaxPlayers      = 2000
+	CycleMillis     = 600
 )
 
 var (
@@ -18,7 +18,7 @@ var (
 )
 
 func main() {
-	listener, err := net.ListenTCP("tcp", &net.TCPAddr{ IP: net.ParseIP("0.0.0.0"), Port: Port })
+	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.ParseIP("0.0.0.0"), Port: Port})
 	if err != nil {
 		panic(err)
 	}
@@ -40,12 +40,16 @@ func main() {
 func UpdatePlayers() {
 	for {
 		cycleStart := time.Now()
-		for _, p := range Players {
+		for i, p := range Players {
 			if p == nil {
 				continue
 			}
 			if p.Connected {
-				p.Process()
+				err := p.Process()
+				if err != nil {
+					Players[i] = nil
+					continue
+				}
 			}
 		}
 		for _, p := range Players {
@@ -56,7 +60,7 @@ func UpdatePlayers() {
 				p.Update()
 			}
 		}
-		time.Sleep(time.Now().Sub(cycleStart) + CycleMillis * time.Millisecond)
+		time.Sleep(time.Now().Sub(cycleStart) + CycleMillis*time.Millisecond)
 	}
 }
 

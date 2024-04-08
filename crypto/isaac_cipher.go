@@ -9,8 +9,8 @@ type ISAACCipher struct {
 	count   uint32
 }
 
-func NewISAACCipher(seed []uint32) (z *ISAACCipher) {
-	z = &ISAACCipher{}
+func NewISAACCipher(seed []uint32) Cipher {
+	z := &ISAACCipher{}
 	for i, r := range seed {
 		if i == 256 {
 			break
@@ -18,7 +18,7 @@ func NewISAACCipher(seed []uint32) (z *ISAACCipher) {
 		z.results[i] = r
 	}
 	z.randInit()
-	return
+	return z
 }
 
 func (z *ISAACCipher) isaac() {
