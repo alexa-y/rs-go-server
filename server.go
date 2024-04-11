@@ -23,7 +23,7 @@ func main() {
 		panic(err)
 	}
 	fmt.Printf("Listening on %v\n", listener.Addr())
-	go UpdatePlayers()
+	go CheckPlayerTimeouts()
 	for {
 		connection, err := listener.AcceptTCP()
 		if err != nil {
@@ -32,8 +32,28 @@ func main() {
 		}
 		fmt.Println(connection.RemoteAddr())
 		if slot := NextPlayerSlot(); slot >= 0 {
-			Players[NextPlayerSlot()] = app.NewPlayer(connection)
+			Players[slot] = app.NewPlayer(slot, connection, func() {
+				Players[slot].Socket.Close()
+				Players[slot] = nil
+			})
+			go Players[slot].Cycle()
 		}
+	}
+}
+
+func CheckPlayerTimeouts() {
+	for {
+		cycleStart := time.Now()
+		for _, p := range Players {
+			if p == nil {
+				continue
+			}
+			if p.Connected && p.TimeoutTimer.TimedOut() {
+				fmt.Printf("Player %v has timed out, removing..\n", p.Username)
+				p.DisconnectFunc()
+			}
+		}
+		time.Sleep(time.Now().Sub(cycleStart) + CycleMillis*time.Millisecond)
 	}
 }
 

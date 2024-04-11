@@ -1,5 +1,7 @@
 package crypto
 
+import "rs-go-server/repo"
+
 const Size uint32 = 256
 
 type ISAACCipher struct {
@@ -9,7 +11,7 @@ type ISAACCipher struct {
 	count   uint32
 }
 
-func NewISAACCipher(seed []uint32) Cipher {
+func NewISAACCipher(seed []uint32) repo.Cipher {
 	z := &ISAACCipher{}
 	for i, r := range seed {
 		if i == 256 {

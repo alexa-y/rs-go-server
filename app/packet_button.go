@@ -8,8 +8,9 @@ import (
 func HandleButtonPacket(p *Player, packet *Packet) {
 	buf := io.NewInBuffer(packet.Data)
 
-	button := buf.ReadShort(io.STANDARD, io.BIG)
-	fmt.Printf("Button: %d\n", button)
+	buttonBytes := buf.ReadBytes(2, io.STANDARD)
+	button := HexToInt(buttonBytes)
+	fmt.Printf("Button: %v\n", button)
 	switch button {
 	case 9154:
 		p.SendLogout()

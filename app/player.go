@@ -3,35 +3,44 @@ package app
 import (
 	"fmt"
 	"net"
-	"rs-go-server/crypto"
 	"rs-go-server/io"
+	"rs-go-server/repo"
+	"time"
 )
 
 const (
 	CONNECTED  = 0
 	LOGGING_IN = 1
 	LOGGED_IN  = 2
+
+	CycleMillis = 600
 )
 
 type Player struct {
+	ID             int
 	Socket         *net.TCPConn
+	DisconnectFunc func()
+	TimeoutTimer   *Timer
 	LoginStage     int
 	UpdateRequired bool
 	Connected      bool
 	Username       string
 	Password       []byte
 	inBuffer       *io.ByteBuffer
-	Encryptor      crypto.Cipher
-	Decryptor      crypto.Cipher
+	Encryptor      repo.Cipher
+	Decryptor      repo.Cipher
 	Position       *Position
 	Inventory      ItemContainer
 	PacketID       byte
 	PacketLength   byte
 }
 
-func NewPlayer(socket *net.TCPConn) *Player {
+func NewPlayer(id int, socket *net.TCPConn, disconnectFunc func()) *Player {
 	player := &Player{
+		ID:             id,
 		Socket:         socket,
+		DisconnectFunc: disconnectFunc,
+		TimeoutTimer:   NewTimer(5 * time.Second),
 		Connected:      true,
 		inBuffer:       io.NewByteBuffer(512),
 		UpdateRequired: true,
@@ -59,6 +68,21 @@ func (p *Player) Process() error {
 func (p *Player) Update() {
 	p.sendUpdate()
 	p.UpdateRequired = false
+}
+
+func (p *Player) Cycle() {
+	for {
+		cycleStart := time.Now()
+		err := p.Process()
+		if err != nil {
+			return
+		}
+		if p.Connected && p.LoginStage == LOGGED_IN {
+			p.Update()
+		}
+		p.TimeoutTimer.Tick()
+		time.Sleep(time.Now().Sub(cycleStart) + CycleMillis*time.Millisecond)
+	}
 }
 
 func (p *Player) Login() error {

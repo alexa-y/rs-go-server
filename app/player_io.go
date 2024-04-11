@@ -3,7 +3,6 @@ package app
 import (
 	"crypto/rand"
 	"fmt"
-	gio "io"
 	"rs-go-server/crypto"
 	"rs-go-server/io"
 	"strings"
@@ -30,9 +29,8 @@ func (e InvalidClientVersionError) Error() string {
 }
 
 func (p *Player) HandleIncomingData() error {
-	incomingData := make([]byte, 2048)
-	size, err := gio.ReadAtLeast(p.Socket, incomingData, 1)
-	//size, err := p.Socket.ReadAt(incomingData)
+	incomingData := make([]byte, 8192)
+	size, err := p.Socket.Read(incomingData)
 	p.inBuffer.Compact()
 	p.inBuffer.Append(incomingData[:size])
 	p.inBuffer.Flip()
@@ -47,35 +45,38 @@ func (p *Player) HandleIncomingData() error {
 		return p.handleLogin(buffer)
 	}
 
-	if p.PacketID == 0xFF {
-		packetId, _ := p.inBuffer.Read()
-		p.PacketID = packetId
-		p.PacketID -= byte(p.Decryptor.Next())
-		fmt.Printf("Packet ID: %d\n", p.PacketID)
-	}
+	for p.inBuffer.Remaining() > 0 {
+		if p.PacketID == 0xFF {
+			packetId, _ := p.inBuffer.Read()
+			p.PacketID = packetId
+			p.PacketID -= byte(p.Decryptor.Next())
+			fmt.Printf("Packet ID: %d\n", p.PacketID)
+		}
 
-	if p.PacketLength == 0xFF {
-		p.PacketLength = PACKET_SIZES[p.PacketID]
 		if p.PacketLength == 0xFF {
-			if p.inBuffer.Remaining() > 0 {
-				packetLength, _ := p.inBuffer.Read()
-				p.PacketLength = packetLength
-			} else {
-				return nil
+			p.PacketLength = PACKET_SIZES[p.PacketID]
+			if p.PacketLength == 0xFF {
+				if p.inBuffer.Remaining() > 0 {
+					packetLength, _ := p.inBuffer.Read()
+					p.PacketLength = packetLength
+				} else {
+					return nil
+				}
 			}
 		}
-	}
 
-	if p.inBuffer.Remaining() >= int(p.PacketLength) {
-		data := make([]byte, p.PacketLength)
-		for i := range data {
-			data[i], _ = p.inBuffer.Read()
+		if p.inBuffer.Remaining() >= int(p.PacketLength) {
+			data := make([]byte, p.PacketLength)
+			for i := range data {
+				data[i], _ = p.inBuffer.Read()
+			}
+			packet := &Packet{p.PacketID, p.PacketLength, io.NewByteBufferWithBytes(data)}
+			packet.Data.Flip()
+			p.handlePacket(packet)
+
+			p.PacketID = 0xFF
+			p.PacketLength = 0xFF
 		}
-		packet := &Packet{p.PacketID, p.PacketLength, io.NewByteBufferWithBytes(data)}
-		p.handlePacket(packet)
-
-		p.PacketID = 0xFF
-		p.PacketLength = 0xFF
 	}
 	return nil
 }

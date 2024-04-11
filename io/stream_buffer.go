@@ -3,7 +3,7 @@ package io
 import (
 	"errors"
 	"io"
-	"rs-go-server/crypto"
+	"rs-go-server/repo"
 	"strings"
 )
 
@@ -68,17 +68,17 @@ func (sb *StreamBuffer) Read() byte {
 	return sb.ReadByte(STANDARD)
 }
 
-func (sb *StreamBuffer) WriteHeader(cipher crypto.Cipher, value int) {
+func (sb *StreamBuffer) WriteHeader(cipher repo.Cipher, value int) {
 	sb.WriteByte(value+int(cipher.Next()), STANDARD)
 }
 
-func (sb *StreamBuffer) WriteVariablePacketHeader(cipher crypto.Cipher, value int) {
+func (sb *StreamBuffer) WriteVariablePacketHeader(cipher repo.Cipher, value int) {
 	sb.WriteHeader(cipher, value)
 	sb.lengthPosition = sb.Buffer.Position
 	sb.WriteByte(0, STANDARD)
 }
 
-func (sb *StreamBuffer) WriteVariableShortPacketHeader(cipher crypto.Cipher, value int) {
+func (sb *StreamBuffer) WriteVariableShortPacketHeader(cipher repo.Cipher, value int) {
 	sb.WriteHeader(cipher, value)
 	sb.lengthPosition = sb.Buffer.Position
 	sb.WriteShort(0, STANDARD, BIG)
